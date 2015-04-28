@@ -1,13 +1,18 @@
-import numpy as np, os, pprint
+import numpy as np, os, pprint, time
 import astropy.units as u
 from astropy.io import fits
-from astropy.wcs import WCS 
+from astropy.wcs import WCS
+from astropy.table import Table
 from astropy.coordinates import SkyCoord
-import pyregion
+try:
+	import pyregion
+except:
+	'pyregion not available! - please check'
 
-class fits_manip(object):
+class fist(object):
 
-	def __init__(self, fits_path, pix_scale, hdu_idx=0, outfile='edited.fits'):
+	def __init__(self, fits_path, pix_scale, hdu_idx=0, outfile='edited.fits',
+			verbose=False):
 		""" Here we set up what we will need for the other functions.
 
 			Args:
@@ -16,6 +21,7 @@ class fits_manip(object):
 					pixel scale is 0.1 ""/pix then supply 0.1*u.arcsec.
 				hdu_idx (int): FITS hdu-index of the data one wishes to load.
 				outfile (str): path to output image
+				verbose (bool): False if no terminal output wanted, True if otherwise.
 		"""
 
 		self.fits_path 		= fits_path
@@ -25,6 +31,7 @@ class fits_manip(object):
 		self.pix_scale 		= pix_scale
 		self.outfile 		= outfile
 		self.mask 			= False
+		self.verbose		= verbose
 
 	def info(self):
 
@@ -33,25 +40,106 @@ class fits_manip(object):
 
 	def makeMask(self):
 
-		self.mask = np.ones(self.fits_hdu.data.shape, dtype=np.int8)
+		self.mask = np.ones(self.fits_hdu.data.shape, dtype=int)
 
 	def maskRegion(self, region_file):
+		""" Mask (i.e. set to zero) regions defined in a DS9 .reg region file in a 
+			mask image of the same dimensions as the input image.
+
+			Args:
+				region_file (str): path to DS9 region file
+		"""
 
 		if self.mask is False:
 			self.makeMask()
 
 		region = pyregion.open(region_file)
-		self.mask = np.logical_and(self.mask, 
-			np.invert(region.get_mask(self.fits_hdu)))
+		self.mask = np.array(np.logical_and(self.mask, 
+			np.invert(region.get_mask(self.fits_hdu))), dtype=int)
 
 		del region
 
+	def maskXY(self, x, y, r, X=False, Y=False):
+		""" Mask pixel coordinates.
+
+			Args:
+				x: image x-coordinate at center of masking area.
+				y: image y-coordinate at center of masking area.
+				r: radius within which to mask the image, in units of pixels.
+				X: meshgrid X array. False if none passed and will be created.
+				Y: meshgrid Y array. False if none passed and will be created.
+		"""
+
+		if (X is False) or (Y is False):
+			X, Y = np.meshgrid(np.arange(self.fits_hdu.data.shape[0]-1), 
+				np.arange(self.fits_hdu.data.shape[1]-1), sparse=True)
+
+		self.mask[(((X-x)**2. + (Y-y)**2.) < r**2.)] = 0
+
+		del X, Y, x, y, r
+
+	def maskPosition(self, ra, dec, r, r_pixels=False, X=False, Y=False):
+		""" Mask a WCS position in the mask image.
+
+			Args:
+				ra: astropy quantity representing the RA.
+				dec: astropy quantity representing the Dec.
+				r: astropy quantity or float representing the radius to mask out.
+				r_pixels (bool): True if r in pixels, False if r is astropy quantity.
+				X: meshgrid X array. False if none passed and will be created.
+				Y: meshgrid Y array. False if none passed and will be created.
+		"""
+
+		if r_pixels is False:
+			r = r.to(u.arcsec) / self.pix_scale.to(u.arcsec)
+
+		img_xy = np.array(self.fits_wcs.wcs_world2pix(ra, dec, 1))
+		self.maskXY(img_xy[0], img_xy[1], r, X, Y)
+
+	def maskCatalog(self, cat_path, ra_col, dec_col, radii, col_units=u.degree, 
+			r_pixels=False, cat_type='ascii'):
+		""" Use a catalogue of positions to mask objects with radius in the list 
+			of radii. 
+
+			Args:
+				cat_path (str): path to catalogue to load
+				ra_col (str): column name for RA 
+				dec_col (str): column name for Dec
+				radii (list): list of radii for each object to mask out
+				col_units: astropy units that the column data are in. Either 
+					singular or a tuple of astropy units
+				r_pixels (bool): True if radii are in pixels, False otherwise
+				cat_type (str): astropy.table catalogue format identifier
+		"""
+
+		catalog = Table.read(cat_path, format=cat_type)
+		ra, dec = catalog[ra_col], catalog[dec_col]
+
+		if self.mask is False:
+			self.makeMask()
+
+		pos_c = SkyCoord(ra, dec, unit=col_units)
+
+		# Make this here and pass it to other functions for speed
+		X, Y = np.meshgrid(np.arange(self.fits_hdu.data.shape[0]-1), 
+			np.arange(self.fits_hdu.data.shape[1]-1), sparse=True)
+
+		t0 = time.clock()
+		for obj in range(len(pos_c)):
+			self.maskPosition(pos_c.ra[obj].degree, pos_c.dec[obj].degree, 
+				radii[obj], r_pixels, X, Y)
+
+		if self.verbose is True:
+			print '#'*79
+			print 'Finished masking {0} objects in catalog in {1:1.1f}s ({2:1.2f}s / object)'.format(
+				obj+1, time.clock()-t0, (time.clock()-t0)/(obj+1))
+			print '#'*79
+
+		del X, Y, pos_c, ra, dec, catalog
+
 	def maskStats(self):
 		mask_total = np.product(self.mask.shape, dtype=float)
-		print mask_total
 		mask_good = np.sum(self.mask, dtype=float)
-		print mask_good
-		print mask_good / mask_total
 
 	def cropImage(self, crop_coords=False, crop_coords_unit=u.degree, crop_radius=1*u.arcmin):
 		""" Crop the FITS image, centered on some coordinates.
@@ -141,15 +229,21 @@ class fits_manip(object):
 
 
 ### TESTING ################
-test = fits_manip('ngc1068.fits', 
-			pix_scale=0.0996*u.arcsec)
-test.makeMask()
-test.maskRegion('test_region.reg')
+test = fist('example/ngc1068.fits', 
+		pix_scale=0.0996*u.arcsec,
+		verbose=True)
+# test.makeMask()
+radii = 5.*np.random.rand(63)
+test.maskCatalog('example/test_cat.tsv', 
+		'RAJ2000', 
+		'DEJ2000', 
+		radii*u.arcsec)
+test.maskRegion('example/test_region.reg')
 # test.padImage(10.*u.arcsec)
-test.cropImage()
+# test.cropImage()
 # test.cropImage("02 42 40.771 -00 00 47.84", 
 			# (u.hourangle, u.degree), 
 			# crop_radius=0.5*u.arcmin)
-test.writeImage()
-test.maskStats()
-# test.writeMask()
+# test.writeImage()
+# test.maskStats()
+test.writeMask()

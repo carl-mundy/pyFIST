@@ -8,7 +8,7 @@ Package to help manipulate and transform astronomical FITS images while keeping 
 - Produce image masks using catalogues of positions and radii
 
 Package dependencies are
-- numpy
-- astropy
-- pyregion (optional)
+- `numpy` 1.9.2
+- `astropy` 1.0.1
+- `pyregion` 1.1.4 (optional)
   
