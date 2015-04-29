@@ -81,3 +81,10 @@ ngc1068.maskCatalog('example/test_cat.tsv',
 where `radii` is a list/array of radii values in arcseconds computed somewhere else in the script.
 
 Finally, if the image pixel coordinates are already known, these can be masked using `ngc1068.maskXY(x, y, r)` where all variables are in pixels and not astropy.unit quantities.
+
+### Writing Output
+Once the images have been worked on, the image and its mask can be written out with the `.writeImage()` and `.writeMask()` functions. A filename can be specified in either or it will just write to an obviously named file in the current directory.
+```python
+ngc1068.writeImage('ngc1068_fisted.fits')
+ngc1068.writeMask()
+```
