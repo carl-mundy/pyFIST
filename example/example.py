@@ -1,4 +1,5 @@
 from fitsmanip import fist
+import astropy.units as u
 
 # Open up the FITS image and define the pixel scale
 test = fist('ngc1068.fits', pix_scale=0.0996*u.arcsec)
