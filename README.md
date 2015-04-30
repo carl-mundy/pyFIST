@@ -82,6 +82,12 @@ where `radii` is a list/array of radii values in arcseconds computed somewhere e
 
 Finally, if the image pixel coordinates are already known, these can be masked using `ngc1068.maskXY(x, y, r)` where all variables are in pixels and not astropy.unit quantities.
 
+### Flagging Objects
+It is sometimes useful to ask whether the position of an object is in a masked area. The value of the mask image can be returned at WCS and image-coordinates through the use of the `.checkMaskXY()`, `.checkMaskPosition()` and `.checkMaskCatalog()` methods. As an example, if we wanted to check the mask value at the position of NGC1068's centre, we might do:
+```python
+mask_values = ngc1068.checkMaskPosition(40.66987917, -0.01328889)
+```
+
 ### Writing Output
 Once the images have been worked on, the image and its mask can be written out with the `.writeImage()` and `.writeMask()` functions. A filename can be specified in either or it will just write to an obviously named file in the current directory.
 ```python

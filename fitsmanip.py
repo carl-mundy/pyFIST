@@ -33,11 +33,6 @@ class fist(object):
 		self.mask 			= False
 		self.verbose		= verbose
 
-	def info(self):
-
-		pprint.pprint(self.fits_hdu.header)
-		pprint.pprint(self.fits_wcs.wcs.info())
-
 	def makeMask(self):
 
 		self.mask = np.ones(self.fits_hdu.data.shape, dtype=int)
@@ -93,7 +88,7 @@ class fist(object):
 		if r_pixels is False:
 			r = r.to(u.arcsec) / self.pix_scale.to(u.arcsec)
 
-		img_xy = np.array(self.fits_wcs.wcs_world2pix(ra, dec, 1))
+		img_xy = np.array(self.fits_wcs.wcs_world2pix(ra, dec, 0))
 		self.maskXY(img_xy[0], img_xy[1], r, X, Y)
 
 	def maskCatalog(self, cat_path, ra_col, dec_col, radii, col_units=u.degree, 
@@ -137,10 +132,6 @@ class fist(object):
 
 		del X, Y, pos_c, ra, dec, catalog
 
-	def maskStats(self):
-		mask_total = np.product(self.mask.shape, dtype=float)
-		mask_good = np.sum(self.mask, dtype=float)
-
 	def cropImage(self, crop_coords=False, crop_coords_unit=u.degree, crop_radius=1*u.arcmin):
 		""" Crop the FITS image, centered on some coordinates.
 
@@ -154,13 +145,13 @@ class fist(object):
 		if crop_coords is False:
 			# crop_coords = [self.fits_hdu.header['CRVAL1'], self.fits_hdu.header['CRVAL2']]
 			crop_coords = np.array(self.fits_wcs.wcs_pix2world(self.fits_hdu.data.shape[0]/2., 
-				self.fits_hdu.data.shape[1]/2., 1))
+				self.fits_hdu.data.shape[1]/2., 0))
 			print crop_coords
 			crop_c = SkyCoord(crop_coords[0], crop_coords[1], unit=crop_coords_unit)
 		else:
 			crop_c = SkyCoord(crop_coords, unit=crop_coords_unit)
 
-		crop_c_pix = np.array(self.fits_wcs.wcs_world2pix(crop_c.ra.degree, crop_c.dec.degree, 1))
+		crop_c_pix = np.array(self.fits_wcs.wcs_world2pix(crop_c.ra.degree, crop_c.dec.degree, 0))
 		crop_radius_pixels = crop_radius.to(u.arcsec) / self.pix_scale.to(u.arcsec)
 
 		x1 = np.clip(crop_c_pix[0]-crop_radius_pixels, 0, self.fits_hdu.data.shape[0]-1)
@@ -224,21 +215,91 @@ class fist(object):
 		if outfile is False:
 			outfile = self.outfile+'.mask.fits'
 
-		new_hdu = fits.PrimaryHDU(self.mask, header=self.fits_hdu.header)
+		new_hdu = fits.PrimaryHDU(np.array(self.mask, dtype=np.uint8), header=self.fits_hdu.header)
 		new_hdu.writeto(outfile, clobber=True)
+
+	def checkMaskXY(self, x, y):
+		""" Check and return the mask value at image pixel (x,y):
+
+			Args:
+				x: x-coordinate in the image plane
+				y: y-coordinate in the image plane
+
+			Returns:
+				maskvals: list of mask values at positions (x,y). 0 if outside image.
+		"""
+
+		if self.mask is False:
+			self.makeMask()
+
+		if not isinstance(x, (list, np.ndarray)):
+			x = [x]
+		if not isinstance(y, (list, np.ndarray)):
+			y = [y]
+
+		y = np.array(y, dtype=int)
+		x = np.array(x, dtype=int)
+
+		goodmask = (x < self.mask.shape[0])*(y < self.mask.shape[1])*(x >= 0)*(y >= 0)
+		maskvals = np.zeros((x.shape), dtype=np.uint8)
+		maskvals[goodmask] = self.mask[x[goodmask], y[goodmask]]
+
+		return maskvals
+
+
+	def checkMaskPosition(self, ra, dec, units=u.degree):
+
+		""" Check mask values at a particular WCS position.
+
+			Args:
+				ra: ra astropy.unit quantity
+				dec: dec astropy.unit quantity
+
+			Returns: maskvals: list of mask values at positions (x,y). 0 if outside image.
+		"""
+		w_pos = SkyCoord(ra, dec, unit=units)
+		px, py = self.fits_wcs.wcs_world2pix(w_pos.ra.degree, w_pos.dec.degree, 0)
+
+		return self.checkMaskXY(px, py)
+
+	def checkMaskCatalog(self, catpath, xxcol, yycol, units=u.degree, 
+		inpixels=False, cat_type='ascii'):
+
+		""" Check mask values at particular positions in a catalogue.
+
+			Args:
+				catpath: path to catalogue file to load in.
+				xxcol: column name for ra (or x-coordinate).
+				yycol: column name for dec (or y-coordinate).
+				inpixels: True if xxcol, yycol values are in pixel coordinates. 
+					False otherwise.
+				cat_type: astropy.table format indicator. Default is ascii.
+
+			Returns:
+				maskvals: list of mask values at positions (x,y). 0 if outside image.
+		"""
+
+		catalog = Table.read(catpath, format=cat_type)
+		if inpixels is False:
+			return self.checkMaskPosition(catalog[xxcol], catalog[yycol], units=units)
+		else:
+			return self.checkMaskXY(catalog[xxcol], catalog[yycol])
 
 
 ### TESTING ################
+test_w_pos = ["02 42 40.771 -00 00 47.84","02 42 40.771 -00 00 47.84"]
+test_w = SkyCoord(test_w_pos, unit=(u.hourangle,u.degree))
+
 test = fist('example/ngc1068.fits', 
 		pix_scale=0.0996*u.arcsec,
 		verbose=True)
 # test.makeMask()
-radii = 5.*np.random.rand(63)
-test.maskCatalog('example/test_cat.tsv', 
-		'RAJ2000', 
-		'DEJ2000', 
-		radii*u.arcsec)
-test.maskRegion('example/test_region.reg')
+# radii = 5.*np.random.rand(63)
+# test.maskCatalog('example/test_cat.tsv', 
+# 		'RAJ2000', 
+# 		'DEJ2000', 
+# 		radii*u.arcsec)
+# test.maskRegion('example/test_region.reg')
 # test.padImage(10.*u.arcsec)
 # test.cropImage()
 # test.cropImage("02 42 40.771 -00 00 47.84", 
@@ -246,4 +307,14 @@ test.maskRegion('example/test_region.reg')
 			# crop_radius=0.5*u.arcmin)
 # test.writeImage()
 # test.maskStats()
-test.writeMask()
+# test.writeMask()
+# print test.checkMaskPosition(test_w.ra.degree, test_w.dec.degree)
+# print test.checkMaskXY(100,100)
+print test.checkMaskPosition(40.66987917, -0.01328889)
+# print test.checkMaskCatalog('example/test_cat.tsv', 
+	# 'RAJ2000', 'DEJ2000',
+	# cat_type='ascii')
+
+
+
+
